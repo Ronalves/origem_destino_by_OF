@@ -1,0 +1,114 @@
+  METHOD GET_DESTINO.
+    DATA:es_first_stop    TYPE /scmtms/s_tor_stop_k,
+         es_last_stop     TYPE /scmtms/s_tor_stop_k,
+         ls_addressdata   TYPE bapibus1006_address,
+         lt_return        TYPE STANDARD TABLE OF bapiret2,
+         lt_centraldata_o TYPE TABLE OF bapibus1006_central_organ_td,
+         ev_locno         TYPE /sapapo/locno,
+         ev_locid         TYPE /sapapo/locid,
+         ev_partner       TYPE /sapapo/loc_clppaid,
+         ev_edipartner    TYPE /sapapo/loc_edipartner,
+         ev_partner_guid  TYPE bu_partner_guid,
+         ev_descr40       TYPE text40,
+         iv_locid         TYPE /sapapo/locid,
+         iv_locno         TYPE /sapapo/locno.
+
+    DATA(vl_key) = /scmtms/cl_tor_helper_root=>return_key_for_torid( iv_torid = i_of ).
+
+    CHECK vl_key IS NOT INITIAL.
+
+    /scmtms/cl_tor_helper_stop=>get_first_last_stop_of_tor(
+    EXPORTING
+      iv_tor_root_key = vl_key
+    IMPORTING
+      es_first_stop   = es_first_stop
+      es_last_stop    = es_last_stop
+      ).
+
+    iv_locno = es_last_stop-log_locid.
+
+    CHECK iv_locno IS NOT INITIAL.
+
+    CALL FUNCTION '/SAPAPO/LOC_LOCID_GET_LOCATION'
+      EXPORTING
+        iv_locno           = iv_locno
+      IMPORTING
+        ev_locno           = ev_locno
+        ev_locid           = ev_locid
+        ev_partner         = ev_partner
+        ev_edipartner      = ev_edipartner
+        ev_partner_guid    = ev_partner_guid
+        ev_descr40         = ev_descr40
+      EXCEPTIONS
+        location_not_found = 1
+        not_qualified      = 2
+        OTHERS             = 3.
+    IF sy-subrc <> 0.
+* Implement suitable error handling here
+    ENDIF.
+
+    IF ev_partner_guid IS NOT INITIAL.
+
+      CALL FUNCTION 'BUPA_NUMBERS_GET'
+        EXPORTING
+          iv_partner_guid = ev_partner_guid
+        IMPORTING
+          ev_partner      = ev_partner.
+
+      IF ev_partner IS NOT INITIAL.
+
+        CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+          EXPORTING
+            input  = ev_partner
+          IMPORTING
+            output = ev_partner.
+
+        CALL FUNCTION 'BAPI_BUPA_ADDRESS_GETDETAIL'
+          EXPORTING
+            businesspartner = ev_partner
+            valid_date      = sy-datlo
+          IMPORTING
+            addressdata     = ls_addressdata
+          TABLES
+            return          = lt_return.
+
+        CALL FUNCTION 'BAPI_BUPA_CENTRAL_GETLIST'
+          EXPORTING
+            businesspartner         = ev_partner
+          TABLES
+            centraldataorganization = lt_centraldata_o.
+
+        READ TABLE lt_centraldata_o INTO DATA(l_cent_o) INDEX 1.
+        IF sy-subrc = 0.
+          line1 = |{ l_cent_o-name1 }|.
+          line2 = |{ l_cent_o-name2 }|.
+          line3 = |{ ls_addressdata-street }, { ls_addressdata-house_no } |.
+          line4 = |{ ls_addressdata-city }-{ ls_addressdata-region }|.
+        ENDIF.
+      ENDIF.
+    ELSE.
+
+      SELECT SINGLE *
+              FROM /sapapo/locadr
+              INTO @DATA(e_locadr)
+              WHERE locno = @iv_locno.
+
+      IF sy-subrc = 0.
+
+        SELECT SINGLE *
+                      FROM adrc
+                      INTO @DATA(e_adrc)
+                      WHERE addrnumber = @e_locadr-addrnumber.
+
+        IF sy-subrc = 0.
+
+          line1 = ev_descr40.
+          line2 = |{ e_adrc-street }, { e_adrc-house_num1 }|.
+          line3 = |{ e_locadr-city1 }-{ e_locadr-region }|.
+
+        ENDIF.
+
+      ENDIF.
+
+    ENDIF.
+  ENDMETHOD.
